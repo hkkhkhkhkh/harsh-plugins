@@ -1,0 +1,9 @@
+{
+  "name": "design-powerhouse",
+  "version": "1.0.0",
+  "description": "All-in-one design skill combining UI/UX Pro Max (67 styles, 96 palettes, 57 font pairings), Framer Motion animations, and 21st.dev Magic components. Build websites, landing pages, social media posts, dashboards, and anything visual.",
+  "author": {
+    "name": "Harsh Kanwar"
+  },
+  "keywords": ["design", "ui", "ux", "website", "landing-page", "framer-motion", "21st-dev", "social-media", "dashboard"]
+}

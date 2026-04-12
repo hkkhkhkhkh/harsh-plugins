@@ -1,0 +1,12 @@
+{
+  "name": "harsh-marketplace",
+  "owner": {
+    "name": "Harsh Kanwar"
+  },
+  "plugins": [
+    {
+      "name": "design-powerhouse",
+      "source": "./plugins/design-powerhouse"
+    }
+  ]
+}
