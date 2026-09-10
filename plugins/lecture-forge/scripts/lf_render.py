@@ -32,7 +32,7 @@ from pathlib import Path
 
 from lf_analyze import Snapper
 from lf_common import (
-    Interval, die, hhmmss, intersect_intervals, load_profile, log, merge_intervals,
+    Interval, Settings, die, hhmmss, intersect_intervals, load_profile, log, merge_intervals,
     read_json, require_ffmpeg, run, slugify, subtract_intervals, total_duration,
     write_json,
 )
@@ -407,6 +407,22 @@ def write_sidecar(path: Path, clip: dict, tmap: TimeMap, source: str,
 # --------------------------------------------------------------------------
 
 _ROW = re.compile(r"^\|\s*(\d+)\s*\|")
+_MROW = re.compile(r"^\|\s*(M\d+)\s*\|")
+
+
+def approved_mistake_ids(review: Path) -> set[str] | None:
+    """Which content cuts survived the review sheet.
+
+    None means the sheet has no content-cut section at all (an older sheet), in
+    which case every proposed cut applies as before. An empty set means the
+    section was there and every row was deleted — the reviewer rejected them
+    all, which must be honoured rather than read as "no opinion".
+    """
+    text = review.read_text()
+    if "Content cuts proposed" not in text:
+        return None
+    return {m.group(1) for line in text.splitlines()
+            for m in [_MROW.match(line.strip())] if m}
 
 
 def clips_from_review(review: Path, clips: list[dict]) -> list[dict]:
@@ -464,10 +480,16 @@ def render_clip(idx: int, clip: dict, *, src: Path, wd: Path, media: dict,
     log(f"  {hhmmss(span, ms=True)} source -> {hhmmss(tmap.duration, ms=True)} out, "
         f"{len(keeps) - 1} cuts, {len(punches)} punched spans")
 
+    # (output time of the join, source start, source end) for every applied cut
+    applied = [(round(tmap.offsets[i + 1], 3), round(keeps[i][1], 3),
+                round(keeps[i + 1][0], 3))
+               for i in range(len(keeps) - 1)]
+
     if args.dry_run:
         return {"id": clip["id"], "title": clip["title"], "file": str(out_mp4),
                 "source_seconds": round(span, 2), "output_seconds": round(tmap.duration, 2),
-                "cuts": len(keeps) - 1, "punched_spans": len(punches), "rendered": False}
+                "cuts": len(keeps) - 1, "punched_spans": len(punches),
+                "removals": applied, "rendered": False}
 
     if fps > 0:
         clip = dict(clip, start=round(float(clip["start"]) * fps) / fps)
@@ -513,8 +535,77 @@ def render_clip(idx: int, clip: dict, *, src: Path, wd: Path, media: dict,
     return {"id": clip["id"], "title": clip["title"], "file": str(out_mp4),
             "source_seconds": round(span, 2), "output_seconds": round(tmap.duration, 2),
             "cuts": len(keeps) - 1, "punched_spans": len(punches),
-            "subtitles": n_subs, "zoom": round(crop[4], 3) if crop else None,
-            "rendered": True}
+            "removals": applied, "subtitles": n_subs,
+            "zoom": round(crop[4], 3) if crop else None, "rendered": True}
+
+
+def write_removed_report(wd: Path, media: dict, transcript: dict, edits: dict,
+                         results: list[dict], *, verbose: bool = False) -> int:
+    """Every cut that was applied, with the words it took out.
+
+    The dangerous failure mode is invisible: chatter left in gets noticed on the
+    first watch, but a punchline cut out leaves nothing behind to notice. This
+    turns "it chopped something important" from an unfalsifiable complaint into
+    a line someone can point at, and it is what makes reviewing an edit possible
+    without watching every clip end to end.
+
+    Pure-silence rows are summarised rather than listed unless --verbose: on a
+    52-minute lecture they are most of a thousand rows and they carry no words,
+    so listing them buries the ones that removed speech.
+    """
+    words = [w for s in transcript["segments"] for w in s["words"]
+             if w["end"] > w["start"]]
+
+    # Reason lookup: which analysis decision covers this stretch of source.
+    sources = [(c["start"], c["end"], c.get("policy", c.get("reason", "cut")),
+                c.get("reason", "")) for c in edits.get("cuts", [])]
+
+    lines: list[str] = []
+    silent_count = 0
+    silent_seconds = 0.0
+
+    for r in results:
+        if not r.get("rendered") or not r.get("removals"):
+            continue
+        lines.append(f"\n### Clip {r['id']} — {r['title']}\n")
+        lines.append("| Out at | Source | Length | Why | Words removed |")
+        lines.append("|---|---|---|---|---|")
+        rows = 0
+        for out_t, a, b in r["removals"]:
+            taken = [w["word"].strip() for w in words
+                     if w["start"] < b and w["end"] > a]
+            text = " ".join(taken).strip()
+            why = next((p for s0, s1, p, _ in sources if s0 < b and s1 > a), "silence")
+            if not text:
+                silent_count += 1
+                silent_seconds += (b - a)
+                if not verbose:
+                    continue
+                text = "_(silence)_"
+            else:
+                text = f'"{text}"'
+            lines.append(f"| {hhmmss(out_t, ms=True)} | {hhmmss(a, ms=True)} | "
+                         f"{b - a:.2f}s | {why} | {text} |")
+            rows += 1
+        if rows == 0:
+            lines.append("| — | — | — | — | _only pauses removed_ |")
+
+    header = f"""# What was removed — {Path(media['path']).name}
+
+Every cut applied to a rendered clip, with the words it took out. Read this
+before publishing: a clip that kept something it should not have is obvious on
+the first watch, but a clip that lost a punchline looks fine.
+
+Wrong? File it so it changes the tool rather than just this lecture:
+
+    /lecture-forge-feedback <clip> <out-timecode> "what went wrong"
+
+{silent_count} pause-only cuts ({silent_seconds:.0f}s) are not listed
+"""
+    if verbose:
+        header = header.replace(" are not listed", " are listed below")
+    (wd / "removed.md").write_text(header + "\n".join(lines) + "\n")
+    return silent_count
 
 
 def write_summary(wd: Path, media: dict, edits: dict, results: list[dict]) -> None:
@@ -568,6 +659,8 @@ def main() -> None:
     ap.add_argument("--fast", action="store_true", help="VideoToolbox encode")
     ap.add_argument("--preset", default="slow")
     ap.add_argument("--crf", type=int, default=18)
+    ap.add_argument("--verbose-removed", action="store_true",
+                    help="list pause-only cuts in removed.md as well as speech cuts")
     ap.add_argument("--keep-temp", action="store_true",
                     help="keep the intermediate cut-audio WAVs for inspection")
     ap.add_argument("--dry-run", action="store_true", help="report the plan, render nothing")
@@ -583,6 +676,15 @@ def main() -> None:
         die(f"source file has moved: {src}")
 
     profile = load_profile(args.profile)
+    settings = Settings(profile)
+    args.min_cut = settings.get("render.min_cut", MIN_CUT,
+                                args.min_cut if args.min_cut != MIN_CUT else None)
+    args.denoise = settings.get("render.denoise", "afftdn",
+                                args.denoise if args.denoise != "afftdn" else None)
+    args.crf = settings.get("render.crf", 18, args.crf if args.crf != 18 else None)
+    args.preset = settings.get("render.preset", "slow",
+                               args.preset if args.preset != "slow" else None)
+    log(f"settings — {settings.report()}")
     clips = clips_doc.get("clips", [])
     if not clips:
         die("clips.json contains no clips")
@@ -602,7 +704,16 @@ def main() -> None:
     removals = [(c["start"], c["end"]) for c in edits["cuts"]]
     refused_llm: list[dict] = []
     snapper = Snapper([tuple(x) for x in edits["silence_map"]])
-    for mc in clips_doc.get("mistake_cuts", []):
+
+    # Content cuts remove speech, so they only apply if they survived review.
+    approved = approved_mistake_ids(review) if review.exists() else None
+    proposed = clips_doc.get("mistake_cuts", [])
+    if approved is not None:
+        rejected = [m for m in proposed if m.get("id") not in approved]
+        proposed = [m for m in proposed if m.get("id") in approved]
+        if rejected:
+            log(f"{len(rejected)} content cuts rejected in review.md — those words stay")
+    for mc in proposed:
         snapped = snapper.snap_removal(float(mc["start"]), float(mc["end"]),
                                        mc.get("reason", "mistake"), refused_llm)
         if snapped:
@@ -620,7 +731,12 @@ def main() -> None:
                 "removed_total": round(total_duration(removals), 2)})
     if not args.dry_run:
         write_summary(wd, media, edits, results)
+        n_silent = write_removed_report(wd, media, transcript, edits, results,
+                                        verbose=args.verbose_removed)
         log(f"wrote {len(results)} clips to {wd / 'clips'}")
+        log(f"review what was cut: {wd / 'removed.md'} "
+            f"({n_silent} pause-only cuts not listed)"
+            if not args.verbose_removed else f"review what was cut: {wd / 'removed.md'}")
     print(json.dumps({"clips": len(results),
                       "output_seconds": round(sum(r["output_seconds"] for r in results), 2)},
                      indent=2))

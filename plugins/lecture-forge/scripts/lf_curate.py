@@ -18,7 +18,7 @@ import argparse
 import json
 from pathlib import Path
 
-from lf_common import die, hhmmss, log, read_json, write_json
+from lf_common import Settings, die, hhmmss, log, read_json, write_json
 
 WINDOW_SECONDS = 600.0     # ~10 minutes of transcript per curator agent
 WINDOW_OVERLAP = 60.0      # so an idea spanning a boundary is seen whole
@@ -162,14 +162,23 @@ def collect(wd: Path, transcript: dict, duration: float, *,
     clips = dedupe(valid)
 
     clean_mistakes = []
+    seen: set[tuple[float, float]] = set()
     for m in mistakes:
         try:
             lo, hi = float(m["start"]), float(m["end"])
         except (KeyError, TypeError, ValueError):
             continue
-        if 0 <= lo < hi <= duration and (hi - lo) <= 120:
-            clean_mistakes.append({"start": round(lo, 3), "end": round(hi, 3),
-                                   "reason": m.get("reason", "mistake")})
+        if not (0 <= lo < hi <= duration) or (hi - lo) > 120:
+            continue
+        key = (round(lo, 1), round(hi, 1))
+        if key in seen:          # windows overlap, so the same cut arrives twice
+            continue
+        seen.add(key)
+        clean_mistakes.append({"start": round(lo, 3), "end": round(hi, 3),
+                               "reason": m.get("reason", "mistake")})
+    clean_mistakes.sort(key=lambda m: m["start"])
+    for i, m in enumerate(clean_mistakes, start=1):
+        m["id"] = f"M{i}"
 
     for p in problems:
         log(f"dropped: {p}")
@@ -205,8 +214,13 @@ def main() -> None:
         log(f"wrote {len(paths)} transcript window(s) to {wd / 'windows'}")
         print(json.dumps([str(p) for p in paths], indent=2))
     else:
-        payload = collect(wd, transcript, duration,
-                          min_clip=args.min_clip, max_clip=args.max_clip)
+        st = Settings()
+        payload = collect(
+            wd, transcript, duration,
+            min_clip=st.get("clip.min_seconds", MIN_CLIP,
+                            args.min_clip if args.min_clip != MIN_CLIP else None),
+            max_clip=st.get("clip.max_seconds", MAX_CLIP,
+                            args.max_clip if args.max_clip != MAX_CLIP else None))
         write_json(wd / "clips.json", payload)
         log(f"wrote {wd / 'clips.json'}")
         print(json.dumps({"clips": len(payload["clips"]),

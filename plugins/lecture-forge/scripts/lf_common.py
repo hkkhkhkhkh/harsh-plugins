@@ -244,3 +244,92 @@ def load_profile(name: str | None) -> dict:
         die(f"profile '{name}' not found at {path}. Run /lecture-forge-calibrate first.")
     with path.open() as fh:
         return json.load(fh)
+
+
+# --------------------------------------------------------------------------
+# Settings — five layers, narrowest wins
+# --------------------------------------------------------------------------
+#
+#   CLI flag
+#     > room profile     ~/.lecture-forge/profiles/<room>.json   camera facts
+#     > local config     ~/.lecture-forge/config.json            experiments
+#     > shared config    <plugin>/config/defaults.json           team-approved
+#     > code default                                             shipped fallback
+#
+# The shared file is the one that syncs through the repo and carries approved
+# tuning. The code defaults stay in the source as the last resort, so a bad
+# config can always be deleted rather than untangled.
+
+SHARED_CONFIG = Path(__file__).resolve().parent.parent / "config" / "defaults.json"
+LOCAL_CONFIG = LF_HOME / "config.json"
+
+
+def _read_json_if_present(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with path.open() as fh:
+            return json.load(fh)
+    except json.JSONDecodeError as exc:
+        die(f"{path} is not valid JSON: {exc}")
+
+
+class Settings:
+    """Resolves one tunable across the layers, and can say where it came from.
+
+    Provenance matters as much as the value: when a clip comes out wrong the
+    first question is which layer decided it, and 'somewhere in the code' is not
+    an answer anyone can act on.
+    """
+
+    def __init__(self, profile: dict | None = None):
+        self.shared = _read_json_if_present(SHARED_CONFIG)
+        self.local = _read_json_if_present(LOCAL_CONFIG)
+        self.profile = profile or {}
+        self.used: dict[str, str] = {}
+
+    @staticmethod
+    def _dig(data: dict, path: str):
+        cur = data
+        for part in path.split("."):
+            if not isinstance(cur, dict) or part not in cur:
+                return None
+            cur = cur[part]
+        return cur
+
+    def get(self, path: str, default, cli=None):
+        """`path` is dotted, e.g. "gaps.hesitation". `cli` wins when not None."""
+        if cli is not None:
+            self.used[path] = "cli"
+            return cli
+        for layer, name in ((self.profile, "profile"), (self.local, "local"),
+                            (self.shared, "shared")):
+            found = self._dig(layer, path)
+            if found is not None:
+                self.used[path] = name
+                return found
+        self.used[path] = "default"
+        return default
+
+    def merged_list(self, path: str, default: list) -> list:
+        """Lists accumulate instead of overriding.
+
+        An aside pattern added for one room should not silently drop the shared
+        ones; the same goes for filler words. Order is broad to narrow, and
+        duplicates are dropped.
+        """
+        out: list = list(default)
+        for layer in (self.shared, self.local, self.profile):
+            found = self._dig(layer, path)
+            if isinstance(found, list):
+                out += [x for x in found if x not in out]
+        return out
+
+    def report(self) -> str:
+        non_default = {k: v for k, v in self.used.items() if v != "default"}
+        if not non_default:
+            return "all settings at code defaults"
+        by_layer: dict[str, list[str]] = {}
+        for key, layer in sorted(non_default.items()):
+            by_layer.setdefault(layer, []).append(key)
+        return "; ".join(f"{layer}: {', '.join(keys)}" for layer, keys in by_layer.items())

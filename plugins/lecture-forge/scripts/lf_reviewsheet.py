@@ -19,6 +19,7 @@ from lf_common import (
 )
 
 PREVIEW_SECONDS = 15.0
+LONG_CONTENT_CUT = 10.0   # content cuts at least this long are flagged for scrutiny
 
 
 def opening_line(transcript: dict, clip: dict, limit: int = 90) -> str:
@@ -87,6 +88,30 @@ def main() -> None:
             f"{c.get('why_valuable', '').strip()} | {opening_line(transcript, c)}{preview} |"
         )
 
+    # Mistake cuts delete SPEECH, so they belong at the same human gate as clip
+    # selection. Without this they are invisible until after the render, which
+    # is how a 7-second explanation of a term got deleted with nobody asked.
+    words = [w for sg in transcript["segments"] for w in sg["words"]
+             if w["end"] > w["start"]]
+    # Longest first: the biggest deletions carry the most risk and are the ones
+    # that must not be skimmed past. A 28-second cut deserves more scrutiny than
+    # a 1-second one, and sorting by time buries it among trivia.
+    candidates = []
+    for m in doc.get("mistake_cuts", []):
+        lo, hi = float(m["start"]), float(m["end"])
+        if not any(float(c["start"]) < hi and float(c["end"]) > lo for c in clips):
+            continue                      # outside every proposed clip; moot
+        candidates.append((hi - lo, lo, hi, m))
+    candidates.sort(key=lambda x: -x[0])
+
+    mrows = []
+    for length, lo, hi, m in candidates:
+        said = " ".join(w["word"].strip() for w in words
+                        if w["start"] < hi and w["end"] > lo)[:160]
+        flag = " **LONG**" if length >= LONG_CONTENT_CUT else ""
+        mrows.append(f"| {m.get('id','?')} | {hhmmss(lo, ms=True)} | "
+                     f"{length:.1f}s{flag} | {m.get('reason','')[:90]} | \"{said}\" |")
+
     dropped = doc.get("dropped", [])
     dropped_block = ""
     if dropped:
@@ -110,6 +135,19 @@ out, not the raw span.
 |---|---|---|---|---|---|---|
 {chr(10).join(rows)}
 {dropped_block}
+## Content cuts proposed inside those clips
+
+These remove **spoken words**, not pauses. Delete any row you disagree with and
+those words stay in. Rows left here are applied.
+
+Longest first, because the long ones are where content gets lost. Anything
+marked **LONG** removes more than {LONG_CONTENT_CUT:.0f} seconds of speech —
+read the words column before leaving it in.
+
+| # | Source | Length | Why | Words it would remove |
+|---|---|---|---|---|
+{chr(10).join(mrows) if mrows else "| — | — | — | _none proposed_ | — |"}
+
 ## Already decided, applied to every clip
 
 - Pauses over {edits['max_gap']}s shortened to {edits['max_gap']}s — {edits['stats']['seconds_by_kind'].get('silence', 0)}s across the lecture

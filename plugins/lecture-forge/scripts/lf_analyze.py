@@ -38,8 +38,8 @@ from pathlib import Path
 import numpy as np
 
 from lf_common import (
-    Interval, die, drop_short, hhmmss, intersect_intervals, load_profile, log,
-    merge_intervals, read_json, subtract_intervals, total_duration, write_json,
+    Interval, Settings, die, drop_short, hhmmss, intersect_intervals, load_profile,
+    log, merge_intervals, read_json, subtract_intervals, total_duration, write_json,
 )
 
 # ---- tunables -------------------------------------------------------------
@@ -687,12 +687,13 @@ def main() -> None:
     if not wav.exists():
         die(f"missing {wav}")
 
+    settings = Settings(load_profile(args.profile))
     duration = float(media["duration"])
     silence, floor_db, gate_db = build_silence_map(wav, transcript, duration)
     speech = subtract_intervals([(0.0, duration)], silence)
     index = SilenceIndex(silence)
 
-    fillers = set(DEFAULT_FILLERS)
+    fillers = set(settings.merged_list("fillers", DEFAULT_FILLERS))
     if args.fillers:
         fillers = {f.strip().lower() for f in args.fillers.split(",") if f.strip()}
 
@@ -722,13 +723,13 @@ def main() -> None:
         visual = None
     else:
         gaps = {
-            "hesitation": args.gap_hesitation if args.gap_hesitation is not None else 0.15,
-            "clause": args.gap_clause if args.gap_clause is not None else 0.30,
-            "sentence": args.gap_sentence if args.gap_sentence is not None else 0.55,
-            "question": args.gap_question if args.gap_question is not None else 0.85,
-            "emphasis": args.gap_emphasis if args.gap_emphasis is not None else 0.70,
-            "motion": args.gap_motion if args.gap_motion is not None else 1.20,
-            "writing": args.gap_writing if args.gap_writing is not None else 6.00,
+            "hesitation": settings.get("gaps.hesitation", 0.15, args.gap_hesitation),
+            "clause": settings.get("gaps.clause", 0.30, args.gap_clause),
+            "sentence": settings.get("gaps.sentence", 0.55, args.gap_sentence),
+            "question": settings.get("gaps.question", 0.85, args.gap_question),
+            "emphasis": settings.get("gaps.emphasis", 0.70, args.gap_emphasis),
+            "motion": settings.get("gaps.motion", 1.20, args.gap_motion),
+            "writing": settings.get("gaps.writing", 6.00, args.gap_writing),
         }
 
     policy = PausePolicy(gaps=gaps, words=words, db=db, visual=visual,
@@ -739,8 +740,8 @@ def main() -> None:
     if not args.no_asides:
         snapper = Snapper(silence)
         patterns = [re.compile(p, re.I) for p in
-                    DEFAULT_ASIDES + list(args.aside_pattern)
-                    + list(load_profile(args.profile).get("aside_patterns", []))]
+                    settings.merged_list("aside_patterns", DEFAULT_ASIDES)
+                    + list(args.aside_pattern)]
         aside_cuts = find_asides(words, patterns, snapper, refused)
         for c in aside_cuts:
             log(f"aside cut {hhmmss(c['start'], ms=True)}-{hhmmss(c['end'], ms=True)}  "
@@ -763,6 +764,7 @@ def main() -> None:
     payload = {
         "max_gap": args.max_gap,
         "policy": args.policy,
+        "settings_from": settings.report(),
         "gaps": gaps,
         "policy_seconds_removed": {k: round(v, 1) for k, v in
                                    sorted(policy_mix.items(), key=lambda kv: -kv[1])},
@@ -798,6 +800,7 @@ def main() -> None:
     log(f"speech {hhmmss(payload['speech_duration'])} of {hhmmss(duration)}")
     log(f"{s['cuts']} cuts, {s['filler_words_removed']} fillers, "
         f"{s['stutters_removed']} stutters, {s['refused']} refused")
+    log(f"settings — {settings.report()}")
     log(f"removable {payload['removable_total']}s -> "
         f"{hhmmss(duration - payload['removable_total'])} if the whole lecture is kept")
     print(json.dumps(s, indent=2))

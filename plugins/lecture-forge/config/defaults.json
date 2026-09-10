@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Team-approved tuning for lecture-forge. This file syncs through the repo,",
+    "so a change here changes everyone's edits — it is the file a tuning pull",
+    "request touches. Anything absent falls back to the code defaults in",
+    "scripts/, which are the shipped values and always safe to fall back to.",
+    "Local experiments belong in ~/.lecture-forge/config.json instead, and",
+    "per-camera facts (board box, room chatter) belong in a room profile.",
+    "See docs/FEEDBACK-DESIGN.md."
+  ],
+
+  "gaps": {
+    "_comment": "Seconds of pause allowed, by what the pause is doing.",
+    "hesitation": 0.15,
+    "clause": 0.30,
+    "sentence": 0.55,
+    "question": 0.85,
+    "emphasis": 0.70,
+    "motion": 1.20,
+    "writing": 6.00
+  },
+
+  "clip": {
+    "_comment": "Bounds on a proposed clip, in seconds.",
+    "min_seconds": 40,
+    "max_seconds": 1200
+  },
+
+  "render": {
+    "min_cut": 0.05,
+    "denoise": "afftdn",
+    "crf": 18,
+    "preset": "slow"
+  },
+
+  "audio": {
+    "lufs": -16.0,
+    "true_peak": -1.5,
+    "lra": 11.0
+  },
+
+  "fillers": [],
+  "aside_patterns": []
+}
