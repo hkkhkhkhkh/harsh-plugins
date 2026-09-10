@@ -7,6 +7,14 @@
     {
       "name": "design-powerhouse",
       "source": "./plugins/design-powerhouse"
+    },
+    {
+      "name": "healthcare-site",
+      "source": "./plugins/healthcare-site"
+    },
+    {
+      "name": "lecture-forge",
+      "source": "./plugins/lecture-forge"
     }
   ]
 }

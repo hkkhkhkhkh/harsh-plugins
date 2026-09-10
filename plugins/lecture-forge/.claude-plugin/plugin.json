@@ -1,0 +1,7 @@
+{
+  "name": "lecture-forge",
+  "version": "1.0.0",
+  "description": "Turn a full-length recorded lecture into several publish-ready bite-sized lectures. Transcribes with word-level timestamps, proposes the valuable segments for your approval, then renders them with silence tightening, filler and mistake removal, jump-cut punch-ins, denoise, and EBU R128 loudness normalization.",
+  "author": { "name": "Harsh Kanwar" },
+  "keywords": ["video", "editing", "lecture", "ffmpeg", "whisper", "transcription", "silence-removal", "content-repurposing"]
+}
