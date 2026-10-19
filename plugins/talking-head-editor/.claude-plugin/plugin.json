@@ -1,0 +1,7 @@
+{
+  "name": "talking-head-editor",
+  "version": "2.0.0",
+  "description": "Edit a talking-head recording into a finished reel or 16:9 sales video (VSL) inside one DaVinci Resolve timeline: tight cuts with a stutter scan, cleaned voice, power-word captions, After Effects motion graphics cued to spoken words, real client proof cards, Higgsfield stills and sound, a mixed and loudness-checked soundtrack, render QC and a web encode for the landing page.",
+  "author": { "name": "Harsh Kanwar" },
+  "keywords": ["video", "editing", "davinci-resolve", "after-effects", "higgsfield", "vsl", "reels", "captions", "motion-graphics", "talking-head"]
+}

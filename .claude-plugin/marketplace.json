@@ -15,6 +15,10 @@
     {
       "name": "lecture-forge",
       "source": "./plugins/lecture-forge"
+    },
+    {
+      "name": "talking-head-editor",
+      "source": "./plugins/talking-head-editor"
     }
   ]
 }
